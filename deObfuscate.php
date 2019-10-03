@@ -7,7 +7,7 @@ $iterator = new RecursiveIteratorIterator(
 );
 
 foreach ($iterator as $fileInfo) {
-    if ($fileInfo->getBasename() === '.DS_Store' || $fileInfo->getBasename() === 'processDir.php'|| preg_match('/sample/i', $fileInfo->getBasename())) {
+    if ($fileInfo->getBasename() === '.DS_Store' || $fileInfo->getBasename() === 'deObfuscate.php'|| preg_match('/sample/i', $fileInfo->getBasename())) {
         continue;
     }
 
