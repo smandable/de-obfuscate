@@ -1,4 +1,4 @@
-# deObfuscate
+# de-obfuscate
 Fixes obfuscated filenames by renaming them to the name of the directory they are contained in.
 
 When one obtains a file via NNTP, or BitTorrent, or whatever, they are often "obfuscated". 
