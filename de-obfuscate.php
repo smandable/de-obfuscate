@@ -46,6 +46,7 @@ foreach ($iterator as $file) {
 }
 
 echo "\nContinue?  Y/n ";
+
 $handle = fopen("php://stdin", "r");
 $line = trim(fread($handle, 1));
 if ((trim($line) == 'Y') || (trim($line) == 'y')) {
