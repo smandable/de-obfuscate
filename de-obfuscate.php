@@ -12,7 +12,6 @@ $config = [
     '/x264/i',
     '/DVDRip/i',
     '/hd/i',
-    '/xxx/i',
     '/mp4/i'
 ],
     'validExtensions' => ['mp4', 'mov', 'mkv', 'avi', 'wmv', 'mpeg', 'flv'],
