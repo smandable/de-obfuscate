@@ -1,156 +1,219 @@
 <?php
 
-system("stty -icanon"); // this is so that you don't have to hit enter when you type 'Y' to continue
+$config = [
+    'ignoreFiles' => ['.DS_Store', 'de-obfuscate-no-normalizing.php'],
+    'ignorePatterns' => ['/sample/i'],
+    'deletePatterns' => [
+    '/480p/i',
+    '/720p/i',
+    '/1080p/i',
+    '/2160p/i',
+    '/4k/i',
+    '/x264/i',
+    '/DVDRip/i',
+    '/hd/i',
+    '/xxx/i',
+    '/mp4/i'
+],
+    'validExtensions' => ['mp4', 'mov', 'mkv', 'avi', 'wmv', 'mpeg', 'flv'],
+    'dryRun' => false // Set to false to enable actual file renaming and directory deletion
+];
 
-$path = getcwd() . "/"; // current directory we are working in 
+function shouldIgnore($file, $ignoreFiles, $ignorePatterns = []) {
+    $basename = $file->getBasename();
 
-$originalAndNewNames = array();
+    // Exact match ignore
+    if (in_array($basename, $ignoreFiles)) {
+        return true;
+    }
+
+    // Pattern-based ignore (e.g., filenames containing "sample")
+    foreach ($ignorePatterns as $pattern) {
+        if (preg_match($pattern, $basename)) {
+            unlink($file->getPathname());
+            echo "Deleted pattern-matched file: {$basename}\n";
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function sanitizeFilename($filename, $patterns)
+{
+    $lowestPos = strlen($filename);
+    $matchFound = false;
+
+    // Find the earliest occurrence of any delete pattern
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $filename, $m, PREG_OFFSET_CAPTURE)) {
+            $pos = $m[0][1];
+            if ($pos < $lowestPos) {
+                $lowestPos = $pos;
+                $matchFound = true;
+            }
+        }
+    }
+
+    // If a match is found, truncate the filename at the earliest match
+    if ($matchFound) {
+        $filename = substr($filename, 0, $lowestPos);
+    }
+
+    // Replace spaces, underscores, and dashes with periods
+    $filename = preg_replace(['/[_\s\-]+/'], ['.'], $filename);
+
+    // Collapse multiple periods into one
+    $filename = preg_replace('/\.+/', '.', $filename);
+
+    // Trim leading or trailing periods
+    $filename = trim($filename, '.');
+
+    return $filename;
+}
+
+function isValidExtension($extension, $validExtensions)
+{
+    return in_array(strtolower($extension), $validExtensions);
+}
+
+function generateNewFilename($baseName, $extension)
+{
+    if (substr($baseName, -strlen($extension) - 1) === ".$extension") {
+        return $baseName; // Already has the correct extension
+    }
+    return $baseName . '.' . $extension;
+}
+
+function confirmChanges($filePairs)
+{
+    usort($filePairs, function ($a, $b) {
+        return strcmp(strtolower(basename($a['newFileName'])), strtolower(basename($b['newFileName'])));
+    });
+
+    echo "\nThe following filenames will be created (sorted alphabetically):\n\n";
+    foreach ($filePairs as $pair) {
+        echo basename($pair['newFileName']) . "\n";
+    }
+    echo "\nContinue? Y/n: ";
+    system("stty -icanon");
+    $handle = fopen("php://stdin", "r");
+    $line = fgetc($handle);
+    fclose($handle);
+    system("stty sane");
+    echo "\n\n";
+    return strtolower(trim($line)) === 'y';
+}
+
+function deleteDirectoryRecursively($directory)
+{
+    if (!is_dir($directory)) {
+        return;
+    }
+
+    $files = array_diff(scandir($directory), ['.', '..']);
+
+    foreach ($files as $file) {
+        $filePath = "$directory/$file";
+        if (is_dir($filePath)) {
+            deleteDirectoryRecursively($filePath);
+        } else {
+            unlink($filePath);
+        }
+    }
+
+    rmdir($directory);
+    // echo "Deleted directory: $directory\n";
+}
+
+function processRenames($filePairs, $dryRun)
+{
+    usort($filePairs, function ($a, $b) {
+        return strcmp(strtolower(basename($a['newFileName'])), strtolower(basename($b['newFileName'])));
+    });
+
+    foreach ($filePairs as $index => $pair) {
+        // echo "Renaming: " . basename($pair['origFileName']) . " to " . basename($pair['newFileName']) . "\n";
+        if (!$dryRun) {
+            if (rename($pair['origFileName'], $pair['newFileName'])) {
+                // After renaming, delete the now-empty original directory
+                $originalDirectory = dirname($pair['origFileName']);
+                if (is_dir($originalDirectory)) {
+                    deleteDirectoryRecursively($originalDirectory);
+                }
+            } else {
+                echo "Failed to rename.\n";
+            }
+        }
+    }
+    echo "\n";
+}
+
+// Main Script
+$path = getcwd() . "/";
+
+// Check if there are any subdirectories
+$hasSubdirectories = false;
+$dirIterator = new DirectoryIterator($path);
+foreach ($dirIterator as $item) {
+    if ($item->isDir() && !$item->isDot()) {
+        $hasSubdirectories = true;
+        break;
+    }
+}
+
+if (!$hasSubdirectories) {
+    echo "No directories found, aborting.\n";
+    exit;
+}
+$originalAndNewNames = [];
 
 $iterator = new RecursiveIteratorIterator(
     new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS)
 );
 
-echo "\n";
-
 foreach ($iterator as $file) {
+    if (shouldIgnore($file, $config['ignoreFiles'], $config['ignorePatterns'])) {
+    continue;
+}
 
-    // ignore the following:
-    if ($file->getBasename() === '.DS_Store' || $file->getBasename() === 'deObfuscate.php' || preg_match('/sample/i', $file->getBasename())) {
+    // Skip files that are directly in the current working directory (not in a subdirectory)
+    if ($file->getPath() === rtrim($path, '/')) {
         continue;
     }
 
-    // patterns to be deleted right away
-    $pattern1 = '/.720p.*/i';
-    $pattern2 = '/.1080p.*/i';
-    $pattern3 = '/.2160p.*/i';
-    $pattern4 = '/.x264.*/i';
-    $pattern5 = '/.DVDRip.*/i';
-    $pattern6 = '/.hd.*/i';
-    $pattern7 = '/.mp4.*/i';
+    // Extract the parent directory name
+    $parentDir = basename($file->getPath());
+    // echo "Parent Directory: $parentDir\n";
 
-    $tmpFilename = $iterator->getSubPath();  //get directory name
+    // Sanitize the parent directory name
+    $sanitizedDirName = sanitizeFilename($parentDir, $config['deletePatterns']);
+    // echo "Sanitized Directory Name: $sanitizedDirName\n";
 
-    $tmpFilename = preg_replace(array($pattern1, $pattern2, $pattern3, $pattern4, $pattern5, $pattern6, $pattern7), '', $tmpFilename); // get rid of these right away
-
-    $tmpFilename = basicFunctions($tmpFilename); // periods, underscores, dashes, etc. to spaces
-
-    $tmpFilename = titleCase($tmpFilename); // convert to title case
-
-    $tmpFilename = preg_replace('/\D+$/', '', trim($tmpFilename)); // gets rid of everything after the last number in case anything is missed
-
-    $fileExtension = pathinfo($file->getBasename(), PATHINFO_EXTENSION); // add file extension
-
-    if (preg_match('/(mp4|mov|mpg|mpeg|wmv|mkv|avi)$/i', $fileExtension)) { // make sure they are video files
-
-        $originalFilename = $iterator->getSubPathname(); // get name of video file in current directory being processed
-        $newFileName = $tmpFilename . "." . $fileExtension;  // add extension to new filename
-
-        echo 'New filename: ' . $newFileName . "\n"; // display new name to verify it looks good
-
-        $originalFilename = $path . $originalFilename;  // add path to file to be renamed
-        $newFileName = $path . $newFileName;  // add path to new filename
-        $dirToDelete = $iterator->getSubPath(); // get directory to be deleted
-
-        // Everything into object array to be passed to rename_files function
-        $originalAndNewNames[] = array('origFileName' => $originalFilename, 'newFileName' => $newFileName, 'dirToDelete' => $dirToDelete);
+    // Validate the file extension
+    $fileExtension = strtolower(pathinfo($file->getBasename(), PATHINFO_EXTENSION));
+    if (!isValidExtension($fileExtension, $config['validExtensions'])) {
+        // echo "Invalid Extension Skipped: $fileExtension\n";
+        continue;
     }
+
+    // Generate the new filename
+    $newFileName = $path . generateNewFilename($sanitizedDirName, $fileExtension);
+    // echo "Generated New Filename: $newFileName\n";
+
+    $originalAndNewNames[] = [
+        'origFileName' => $file->getPathname(),
+        'newFileName' => $newFileName
+    ];
 }
 
-echo "\nContinue?  Y/n "; // prompt to continue
-
-$handle = fopen("php://stdin", "r");
-$line = trim(fread($handle, 1));
-if ((trim($line) == 'Y') || (trim($line) == 'y')) {
-    echo "\n";
-    rename_files($originalAndNewNames);
-} else {
-    echo "Aborted\n";
+if (empty($originalAndNewNames)) {
+    echo "No files to process.\n";
     exit;
 }
-fclose($handle);
 
-function basicFunctions($tmpFilename)
-{
-    $tmpFilename = preg_replace('/\./', ' ', trim($tmpFilename)); // periods to spaces
-    $tmpFilename = preg_replace('/_/', ' ', trim($tmpFilename)); // underscores to spaces
-    $tmpFilename = preg_replace('/-/', ' ', trim($tmpFilename)); // dash to space
-    $tmpFilename = preg_replace('/\s+/', ' ', trim($tmpFilename)); // filter multiple spaces
-    $tmpFilename = preg_replace('/\.+/', '.', trim($tmpFilename)); // filter multiple periods
-    $tmpFilename = preg_replace('/^\.+/', '', trim($tmpFilename)); // trim leading period
-    $tmpFilename = preg_replace('/\s+$/', '', trim($tmpFilename)); // trim trailing space
-
-    return $tmpFilename;
+if (confirmChanges($originalAndNewNames)) {
+    processRenames($originalAndNewNames, $config['dryRun']);
+} else {
+    echo "Operation aborted.\n";
 }
-
-function titleCase($tmpFilename)
-{
-    $delimiters = array(" ");
-    $exceptions = array(
-        "the", "a", "an", "and", "as", "at", "be", "but", "by", "for", "in", "it", "is", "of", "off",
-        "on", "or", "per", "to", "up", "via", "and", "nor", "or", "so", "yet", "with"
-    );
-    /*
-     * Exceptions in lower case are words not to be converted
-     * Exceptions all in upper case are any words not to be converted to title case
-     *   but should be converted to upper case, e.g.:
-     *   king henry viii or king henry Viii should be King Henry VIII
-     */
-    $tmpFilename = mb_convert_case($tmpFilename, MB_CASE_TITLE, "UTF-8");
-    foreach ($delimiters as $dlnr => $delimiter) {
-        $words = explode($delimiter, $tmpFilename);
-        $newwords = array();
-        foreach ($words as $wordnr => $word) {
-            if (in_array(mb_strtoupper($word, "UTF-8"), $exceptions)) {
-                // check exceptions list for any words that should be in upper case
-                $word = mb_strtoupper($word, "UTF-8");
-            } elseif (in_array(mb_strtolower($word, "UTF-8"), $exceptions)) {
-                // check exceptions list for any words that should be in upper case
-                $word = mb_strtolower($word, "UTF-8");
-            } elseif (!in_array($word, $exceptions)) {
-                // convert to uppercase (non-utf8 only)
-                $word = ucfirst($word);
-            }
-            //$word = ucfirst($word);
-
-            array_push($newwords, $word);
-        }
-        $tmpFilename = join($delimiter, $newwords);
-        $tmpFilename = ucfirst($tmpFilename);
-    }
-
-    return $tmpFilename;
-}
-
-function rename_files(&$originalAndNewNames) // passing array in by reference
-{
-    for ($i = 0; $i < count($originalAndNewNames); $i++) {
-        rename($originalAndNewNames[$i]['origFileName'], $originalAndNewNames[$i]['newFileName']);
-        $dirToDelete = $originalAndNewNames[$i]['dirToDelete'];
-        delete_directory($dirToDelete);
-    }
-}
-
-function delete_directory($dirToDelete)
-{
-    // have to do this recursively in case directory not empty
-    if (is_dir($dirToDelete)) {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($dirToDelete, RecursiveDirectoryIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::CHILD_FIRST
-        );
-
-        foreach ($iterator as $file) {
-            if ($file->isDir()) {
-                rmdir($file->getPathname());
-            } else {
-                unlink($file->getPathname());
-            }
-        }
-
-        rmdir($dirToDelete);
-    } else {
-        unlink($dirToDelete);
-    }
-}
-
-system("stty sane"); // reset terminal back
