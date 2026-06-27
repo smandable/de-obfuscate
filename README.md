@@ -55,3 +55,7 @@ Edit the `$config` array at the top of the script:
 ## Requirements
 
 - PHP 7.0+
+
+## License
+
+MIT
